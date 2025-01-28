@@ -132,6 +132,10 @@ def update_investment_graph(stock_symbols, metrics_data):
      Input("interval-component", "n_intervals")]
 )
 def update_investment_graph(selected_stocks, n_intervals):
+    # Check if selected_stocks is empty or None
+    if not selected_stocks:
+        return {}, [], []  # Return empty graph and table when no stock is selected
+    
     global metrics_data_store  # Use global store for real-time updates
     
     # Calculate metrics and investment parameters
