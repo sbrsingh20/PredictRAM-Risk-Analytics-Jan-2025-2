@@ -1,74 +1,48 @@
-import pandas as pd
-import streamlit as st
-import plotly.express as px
-import plotly.graph_objects as go
-import numpy as np
-
-# Read data from the original Excel file
-file_path = "merged_stock_data_with_categories_in_cells_nov2024.xlsx"
-df = pd.read_excel(file_path)
-
-# Read data from the additional Excel file with calculated metrics
-metrics_file_path = "calculated_stock_metrics_full.xlsx"
-metrics_df = pd.read_excel(metrics_file_path)
-
-# Categories and risk thresholds from the original code
-risk_categories = {
-    "Market Risk": {
-        "Volatility": (0.1, 0.2),
-        "Beta": (0.5, 1.5),
-        "Correlation with ^NSEI": (0.7, 1),
-    },
-    "Financial Risk": {
-        "debtToEquity": (0.5, 1.5),
-        "currentRatio": (1.5, 2),
-        "quickRatio": (1, 1.5),
-        "Profit Margins": (20, 30),
-        "returnOnAssets": (10, 20),
-        "returnOnEquity": (15, 25),
-    },
-    "Liquidity Risk": {
-        "Volume": (1_000_000, float('inf')),
-        "Average Volume": (500_000, 1_000_000),
-        "marketCap": (10_000_000_000, float('inf')),
-    },
-}
-
-def categorize_risk(value, thresholds):
-    """Categorizes risk based on predefined thresholds."""
+def categorize_investment(value, thresholds, metric_type):
+    """Categorizes investment quality based on predefined thresholds."""
     try:
         value = float(value)
     except (ValueError, TypeError):
         return "Data not available"
 
-    if value < thresholds[0]:
-        return "Good"
-    elif thresholds[0] <= value <= thresholds[1]:
-        return "Neutral"
+    # Adjust thresholds based on metric type (e.g., Sharpe Ratio, Drawdown, etc.)
+    if metric_type == "positive":
+        if value > thresholds[1]:
+            return "Excellent"
+        elif thresholds[0] <= value <= thresholds[1]:
+            return "Good"
+        else:
+            return "Fair"
+    elif metric_type == "negative":
+        if value < thresholds[0]:
+            return "Excellent"
+        elif thresholds[0] <= value <= thresholds[1]:
+            return "Good"
+        else:
+            return "Fair"
     else:
-        return "Bad"
+        return "Data not available"
 
-def get_risk_color(risk_level):
-    """Returns the color associated with a risk level."""
-    if risk_level == "Good":
+def get_investment_color(investment_level):
+    """Returns the color associated with an investment quality level."""
+    if investment_level == "Excellent":
         return "green"
-    elif risk_level == "Neutral":
+    elif investment_level == "Good":
         return "yellow"
-    elif risk_level == "Bad":
-        return "red"
+    elif investment_level == "Fair":
+        return "orange"
     else:
         return "black"
 
-def calculate_risk_parameters(stock_symbols):
-    """Calculates and categorizes risk parameters for a given stock portfolio."""
-    results = []
+def calculate_investment_parameters(stock_symbols):
+    """Calculates and categorizes investment parameters for a given stock portfolio."""
+    results = []  # Initialize results here for proper scope
     stock_scores = {}
-    category_scores = {category: 0 for category in risk_categories}
-    total_portfolio_score = 0
+    total_investment_score = 0
 
-    # Iterate over each stock symbol
+    stock_data = fetch_stock_data(stock_symbols)  # Fetch latest stock data
+
     for stock_symbol in stock_symbols:
-        # Get data from Excel file
         stock_info = df[df['Stock Symbol'] == stock_symbol]
 
         if stock_info.empty:
@@ -77,154 +51,132 @@ def calculate_risk_parameters(stock_symbols):
 
         stock_info = stock_info.iloc[0]  # Get the first row for the stock
 
-        # Initialize summary for the stock
-        total_stock_score = 0
-        summary = {category: {'Good': 0, 'Neutral': 0, 'Bad': 0, 'Data not available': 0} for category in risk_categories}
+        # Fetch real-time data from Yahoo Finance (Price, Volume, etc.)
+        if stock_symbol in stock_data:
+            real_time_data = stock_data[stock_symbol].iloc[-1]
+            stock_info['Price'] = real_time_data['Close']
+            stock_info['Volume'] = real_time_data['Volume']
+        else:
+            stock_info['Price'] = 'Data not available'
+            stock_info['Volume'] = 'Data not available'
 
-        # Process each risk category and its parameters
+        total_stock_score = 0
+        summary = {category: {'Excellent': 0, 'Good': 0, 'Fair': 0, 'Data not available': 0} for category in risk_categories}
+
+        # Process each investment category and its parameters
         for category, parameters in risk_categories.items():
             for param, thresholds in parameters.items():
                 value = stock_info.get(param)
 
                 if value is not None:
-                    risk_level = categorize_risk(value, thresholds)
-                    summary[category][risk_level] += 1
+                    investment_level = categorize_investment(value, thresholds, param)
+
                     results.append({
                         'Stock Symbol': stock_symbol,
                         'Category': category,
                         'Parameter': param,
                         'Value': value,
-                        'Risk Level': risk_level,
-                        'Color': get_risk_color(risk_level)
+                        'Investment Level': investment_level,
+                        'Color': get_investment_color(investment_level),
+                        'Timestamp': datetime.now()
                     })
 
-                    if risk_level == "Good":
-                        category_scores[category] += 1
-                        total_portfolio_score += 1
+                    if investment_level == "Excellent":
+                        total_investment_score += 2
+                        total_stock_score += 2
+                    elif investment_level == "Good":
+                        total_investment_score += 1
                         total_stock_score += 1
-                    elif risk_level == "Bad":
-                        category_scores[category] -= 1
-                        total_portfolio_score -= 1
+                    elif investment_level == "Fair":
+                        total_investment_score -= 1
                         total_stock_score -= 1
-                else:
-                    results.append({
-                        'Stock Symbol': stock_symbol,
-                        'Category': category,
-                        'Parameter': param,
-                        'Value': 'Data not available',
-                        'Risk Level': 'Data not available',
-                        'Color': 'black'
-                    })
-                    summary[category]['Data not available'] += 1
 
         stock_scores[stock_symbol] = total_stock_score  # Save the score for the stock
 
-    return results, category_scores, stock_scores, total_portfolio_score
+    return results, stock_scores, total_investment_score
 
-# Streamlit UI components
-st.title("Stock Risk Analysis Dashboard")
+def update_investment_graph(stock_symbols, metrics_data):
+    """Updates the live graph with tick-by-tick data reflecting the investment score."""
+    fig = go.Figure()
+    time_data = [m["Timestamp"] for m in metrics_data]
 
-# Dropdown to select stocks
-selected_stocks = st.multiselect(
-    "Select stocks",
-    options=df['Stock Symbol'].unique(),
-    default=df['Stock Symbol'].unique()[0]
-)
-
-# Calculate risk parameters for the selected stocks
-results, category_scores, stock_scores, total_portfolio_score = calculate_risk_parameters(selected_stocks)
-
-# Display the summary
-st.subheader("Summary")
-summary_text = f"Total Portfolio Score: {total_portfolio_score}\n"
-for category, score in category_scores.items():
-    summary_text += f"{category}: {score}\n"
-st.text(summary_text)
-
-# Add Risk Meter (Example for one stock)
-def plot_risk_meter(stock_symbol):
-    stock_info = df[df['Stock Symbol'] == stock_symbol].iloc[0]
-    stock_score = stock_scores.get(stock_symbol, 0)
-
-    fig = go.Figure(go.Indicator(
-        mode="gauge+number",
-        value=stock_score,
-        gauge={
-            "axis": {"range": [None, 5]},
-            "bar": {"color": "black"},
-            "steps": [
-                {"range": [0, 2], "color": "green"},
-                {"range": [2, 4], "color": "yellow"},
-                {"range": [4, 5], "color": "red"},
-            ],
-        },
-        title={"text": f"Risk Meter for {stock_symbol}"},
-    ))
-    st.plotly_chart(fig)
-
-# Display risk meters for selected stocks
-for stock_symbol in selected_stocks:
-    plot_risk_meter(stock_symbol)
-
-# Display Pie Charts for Risk Distribution
-def plot_risk_pie_chart(category):
-    filtered_results = [r for r in results if r['Category'] == category]
-    risk_levels = ['Good', 'Neutral', 'Bad', 'Data not available']
-    counts = {risk: 0 for risk in risk_levels}
-
-    for result in filtered_results:
-        counts[result['Risk Level']] += 1
-
-    fig = px.pie(names=risk_levels, values=list(counts.values()), title=f"{category} Risk Distribution")
-    st.plotly_chart(fig)
-
-# Display pie charts for each risk category
-for category in risk_categories.keys():
-    plot_risk_pie_chart(category)
-
-# Radar Chart for Stock Metrics Comparison
-def plot_radar_chart(stock_symbols):
-    radar_data = metrics_df[metrics_df['Stock Symbol'].isin(stock_symbols)]
-
-    if not radar_data.empty:
-        radar_metrics = ['Annualized Alpha (%)', 'Sharpe Ratio (Daily)', 'Beta', 'Volatility', 'Profit Margins']
-        
-        # Check if all radar metrics columns are present in the data
-        existing_columns = [col for col in radar_metrics if col in radar_data.columns]
-
-        if not existing_columns:
-            st.warning("None of the radar metrics are available in the dataset.")
-            return
-        
-        # Filter the data to include only existing columns in radar_metrics
-        radar_data = radar_data[["Stock Symbol"] + existing_columns]
-
-        fig = go.Figure()
-
-        # Adding data for each stock
-        for stock in stock_symbols:
-            stock_data = radar_data[radar_data['Stock Symbol'] == stock].drop(columns="Stock Symbol")
-            fig.add_trace(go.Scatterpolar(
-                r=stock_data.iloc[0],
-                theta=existing_columns,
-                fill='toself',
-                name=stock
+    for stock_symbol in stock_symbols:
+        stock_metrics = [m for m in metrics_data if m["Stock Symbol"] == stock_symbol]
+        for metric in ["Annualized Alpha", "Annualized Volatility", "Sharpe Ratio", "Treynor Ratio", "Sortino Ratio", "Max Drawdown", "R-Squared", "Downside Deviation", "Tracking Error", "VaR (95%)"]:
+            metric_data = [m["Value"] for m in stock_metrics if m["Parameter"] == metric]
+            fig.add_trace(go.Scatter(
+                x=time_data,
+                y=metric_data,
+                mode='lines+markers',
+                name=f"{stock_symbol} - {metric}"
             ))
 
-        fig.update_layout(
-            polar=dict(
-                radialaxis=dict(visible=True, range=[0, 100]),
-            ),
-            showlegend=True,
-            title="Radar Chart for Stock Metrics Comparison"
-        )
-        st.plotly_chart(fig)
+    fig.update_layout(
+        title="Live Investment Metrics Over Time",
+        xaxis_title="Time",
+        yaxis_title="Value",
+        legend_title="Stock Symbol & Metric",
+        template="plotly_dark",
+        showlegend=True,
+        xaxis=dict(tickmode='array', tickvals=time_data),
+        margin=dict(l=40, r=40, t=40, b=40)
+    )
 
-# Display Radar Chart for selected stocks
-plot_radar_chart(selected_stocks)
+    return fig
 
-# Additional Investment Score Visualization
-investment_data = [{"Stock Symbol": stock, "Investment Score": score} for stock, score in stock_scores.items()]
-investment_df = pd.DataFrame(investment_data)
-fig = px.bar(investment_df, x="Stock Symbol", y="Investment Score", title="Investment Scores for Selected Stocks")
-st.plotly_chart(fig)
+@app.callback(
+    [Output("investment-graph", "figure"),
+     Output("investment-table", "data"),
+     Output("investment-table", "columns")],
+    [Input("stock-dropdown", "value"),
+     Input("interval-component", "n_intervals")]
+)
+def update_investment_graph(selected_stocks, n_intervals):
+    global metrics_data_store  # Use global store for real-time updates
+    
+    # Calculate metrics and investment parameters
+    results, stock_scores, total_investment_score = calculate_investment_parameters(selected_stocks)
+    
+    # Update metrics data store
+    for result in results:
+        stock_symbol = result["Stock Symbol"]
+        metrics_data_store[stock_symbol].append(result)
+    
+    # Update the live graph with the new tick-by-tick data
+    fig = update_investment_graph(selected_stocks, [m for m in metrics_data_store.values()])
+
+    # Define columns dynamically based on the 'results'
+    columns = [{"name": col, "id": col} for col in results[0].keys()] if results else []
+
+    return fig, results, columns
+
+# Update the layout to reflect the "investment" terminology
+app.layout = html.Div([
+    html.H1("Stock Investment & Metrics Dashboard"),
+    
+    dcc.Dropdown(
+        id="stock-dropdown",
+        options=[{"label": symbol, "value": symbol} for symbol in df['Stock Symbol'].unique()],
+        multi=True,
+        placeholder="Select Stock Symbols"
+    ),
+    
+    dcc.Interval(
+        id="interval-component",
+        interval=60000,  # Update every minute (60000 ms)
+        n_intervals=0
+    ),
+    
+    dcc.Graph(id="investment-graph"),
+    
+    DataTable(
+        id="investment-table",
+        columns=[],  # Initially no columns
+        data=[],  # Initially, no data is displayed
+        style_table={'height': '400px', 'overflowY': 'auto'}
+    )
+])
+
+# Run the app
+if __name__ == "__main__":
+    app.run_server(debug=True)
